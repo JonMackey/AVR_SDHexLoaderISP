@@ -387,7 +387,7 @@ void SDHexLoader::EnterPressed(void)
 							Serial1.begin(mUploadSpeed);
 							// nullptr means "using HardwareSerial USB stream"
 							mInSession = mSDHexSession.begin(hexFilename, &Serial1,
-												nullptr, UnixTime::Time());
+												nullptr, false, UnixTime::Time());
 							mTargetIsISP = false;
 						}
 					}
