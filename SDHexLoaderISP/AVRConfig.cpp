@@ -44,6 +44,7 @@
 /*
 *	The list of desired keys
 */
+const char kBootloaderKeyStr[] PROGMEM = "bootloader";
 const char kByteCountKeyStr[] PROGMEM = "byte_count";
 const char kChipEraseDelayKeyStr[] PROGMEM = "chip_erase_delay";
 const char kDescKeyStr[] PROGMEM = "desc";
@@ -54,6 +55,9 @@ const char kFCPUKeyStr[] PROGMEM = "f_cpu";
 const char kFlashMinWriteDelayKeyStr[] PROGMEM = "flash.min_write_delay";
 const char kFlashPageSizeKeyStr[] PROGMEM = "flash.page_size";
 const char kFlashReadSizeKeyStr[] PROGMEM = "flash.readsize";
+const char kFusesKeyStr[] PROGMEM = "fuses";
+const char kLockMinWriteDelayKeyStr[] PROGMEM = "lock.min_write_delay";
+const char kLockBitsKeyStr[] PROGMEM = "lock_bits";
 const char kSignatureKeyStr[] PROGMEM = "signature";
 const char kSTK500DevCodeKeyStr[] PROGMEM = "stk500_devcode";
 const char kTimestampKeyStr[] PROGMEM = "timestamp";
@@ -62,6 +66,7 @@ const char kUploadSpeedKeyStr[] PROGMEM = "upload.speed";
 
 const char* const kDesiredConfigKeys[] PROGMEM =
 {	// Sorted alphabetically
+	kBootloaderKeyStr,
 	kByteCountKeyStr,
 	kChipEraseDelayKeyStr,
 	kDescKeyStr,
@@ -72,6 +77,9 @@ const char* const kDesiredConfigKeys[] PROGMEM =
 	kFlashMinWriteDelayKeyStr,
 	kFlashPageSizeKeyStr,
 	kFlashReadSizeKeyStr,
+	kFusesKeyStr,
+	kLockMinWriteDelayKeyStr,
+	kLockBitsKeyStr,
 	kSignatureKeyStr,
 	kSTK500DevCodeKeyStr,
 	kTimestampKeyStr,
@@ -83,6 +91,7 @@ enum EDesiredKeyIndexes
 {
 	eInvalidKeyIndex,
 	// Must align with kDesiredConfigKeys
+	eBootloader,
 	eByteCount,
 	eChipEraseDelay,
 	eDesc,
@@ -93,6 +102,9 @@ enum EDesiredKeyIndexes
 	eFlashMinWriteDelay,
 	eFlashPageSize,
 	eFlashReadSize,
+	eFuses,
+	eLockMinWriteDelay,
+	eLockBits,
 	eSignature,
 	eSTK500DevCode,
 	eTimestamp,
@@ -151,7 +163,9 @@ bool AVRConfig::ReadFile(
 							thisChar = ReadUInt32Number(value);
 							switch (keyIndex)
 							{
-							
+								case eBootloader:
+									mConfig.bootloader = value;
+									break;
 								case eByteCount:
 									mConfig.byteCount = value;
 									break;
@@ -171,6 +185,11 @@ bool AVRConfig::ReadFile(
 									mConfig.fCPU = value;
 									requiredKeyValues++;
 									break;
+								case eFuses:
+									mConfig.fuses[0] = value >> 16;
+									mConfig.fuses[1] = value >> 8;
+									mConfig.fuses[2] = value;
+									break;
 								case eFlashMinWriteDelay:
 									mConfig.flashMinWriteDelay = value;
 									break;
@@ -180,6 +199,14 @@ bool AVRConfig::ReadFile(
 									break;
 								case eFlashReadSize:
 									mConfig.flashReadSize = value;
+									break;
+								case eLockBits:
+									mConfig.lockBits[0] = value >> 16;
+									mConfig.lockBits[1] = value >> 8;
+									mConfig.lockBits[2] = value;
+									break;
+								case eLockMinWriteDelay:
+									mConfig.lockMinWriteDelay = value;
 									break;
 								case eSignature:
 									mConfig.signature[0] = value >> 16;
@@ -265,7 +292,7 @@ uint8_t AVRConfig::FindKeyIndex(
 		if (cmpResult == 0)
 		{
 			return(current+1);	// Add 1, 0 is reserved for "not found"
-		} else if (cmpResult < 0)
+		} else if (cmpResult <= 0)
 		{
 			rightIndex = current - 1;
 		} else

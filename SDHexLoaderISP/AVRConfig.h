@@ -33,11 +33,35 @@
 class SdFile;
 #endif
 
+/*
+*	SAVRConfig.bootloader = 0 if none, otherwise it's the integer suffix to a
+*	bootloader in the bootloaders folder.  All of the bootloaders in the
+*	bootloaders folder are of the form Bn.hex, where n is the bootloader suffix
+*	as a hexadecimal string.
+*	
+*	The original path can be found in the file bootloaders/paths.txt, where the
+*	suffix value is a key to the path. paths.txt is managed/updated by the
+*	HexLoaderUtility and should not be edited manually.
+*/
 struct SAVRConfig
 {
 	char		desc[20];
 	uint8_t		devcode;
 	uint8_t		signature[3];
+	enum EFuse
+	{
+		eExtended,
+		eHigh,
+		eLow
+	};
+	uint8_t		fuses[3];		// extended, high, low
+	enum ELock
+	{
+		eMask,
+		eLock,
+		eUnlock
+	};
+	uint8_t		lockBits[3];	// mask, lock, unlock
 	uint16_t	chipEraseDelay;
 	uint16_t	eepromMinWriteDelay;
 	uint16_t	eepromPageSize;
@@ -46,7 +70,9 @@ struct SAVRConfig
 	uint16_t	flashMinWriteDelay;
 	uint16_t	flashPageSize;
 	uint16_t	flashReadSize;
+	uint16_t	lockMinWriteDelay;
 	uint16_t	timestamp;
+	uint16_t	bootloader;	// See above
 	uint32_t	uploadMaximumSize;
 	uint32_t	uploadSpeed;
 	uint32_t	byteCount;	// Of related hex file.

@@ -43,6 +43,7 @@ const char kNoMessageStr[] PROGMEM = " ";
 const char kSourceStr[] PROGMEM = "Source: ";		// 119px
 const char kUSBStr[] PROGMEM = "USB";
 const char kSDStr[] PROGMEM = "SD";
+const char kSDBLStr[] PROGMEM = "SD BL";
 
 const char kInsertSDCardStr[] PROGMEM = "Insert SD Card";
 const char kNoHexFilesStr[] PROGMEM = "No hex files";
@@ -81,6 +82,11 @@ const char kUnknownErrorStr[] PROGMEM = "Unknown error";
 const char kHexDataErrorStr[] PROGMEM = "Hex data error";
 const char kSignatureErrorStr[] PROGMEM = "Signature error";
 const char kVerifyFailedStr[] PROGMEM = "Verify failed";
+const char kUnlockErrorStr[] PROGMEM = "Unlock error";
+const char kLockErrorStr[] PROGMEM = "Lock error";
+const char kEFuseErrorStr[] PROGMEM = "EFuse error";
+const char kHFuseErrorStr[] PROGMEM = "HFuse error";
+const char kLFuseErrorStr[] PROGMEM = "LFuse error";
 
 struct SStringDesc
 {
@@ -104,6 +110,11 @@ const SStringDesc kTextDesc[] PROGMEM =
 	{kHexDataErrorStr, XFont::eRed},
 	{kSignatureErrorStr, XFont::eRed},
 	{kVerifyFailedStr, XFont::eRed},
+	{kUnlockErrorStr, XFont::eRed},
+	{kLockErrorStr, XFont::eRed},
+	{kEFuseErrorStr, XFont::eRed},
+	{kHFuseErrorStr, XFont::eRed},
+	{kLFuseErrorStr, XFont::eRed},
 	
 	{kSuccessStr, XFont::eWhite},
 //	{kYesStr, XFont::eGreen},
@@ -158,7 +169,7 @@ void SDHexLoader::begin(
 	mSDCardPresent = false;	// This will be updated on the first call to Update if present.
 	mInSession = eIdle;
 	mMode = 99;	// Forces GoToMainMode to setup mode vars
-	mUseSDSource = false;
+	mSource = eUSBSource;
 	GoToMainMode();
 	ShowSelectionFrame();
 	{
@@ -182,8 +193,23 @@ void SDHexLoader::LeftRightButtonPressed(
 			{
 				if (!mInSession)
 				{
-					mUseSDSource = !mUseSDSource;	// Else use USB as source
-					mMaxMainModeItem = mUseSDSource ? eFilenameItem : eStartStopItem;
+					if (inIncrement)
+					{
+						if (mSource < eSDBLSource)
+						{
+							mSource++;
+						} else
+						{
+							mSource = eUSBSource;
+						}
+					} else if (mSource > eUSBSource)
+					{
+						mSource--;
+					} else
+					{
+						mSource = eSDBLSource;
+					}
+					mMaxMainModeItem = mSource != eUSBSource ? eFilenameItem : eStartStopItem;
 					mPrevHexFileIndex = 0xFFFF;	// Force hex file line to redraw
 				}
 			} else if (mCurrentFieldOrItem == eFilenameItem &&
@@ -269,7 +295,7 @@ void SDHexLoader::UpDownButtonPressed(
 		case eMainMode:
 			if (inIncrement)
 			{
-				if ((!mUseSDSource || mHexFileIndex != 0) &&
+				if ((mSource == eUSBSource || mHexFileIndex != 0) &&
 					mCurrentFieldOrItem < mMaxMainModeItem)
 				{
 					mCurrentFieldOrItem++;
@@ -322,14 +348,15 @@ void SDHexLoader::EnterPressed(void)
 			*/
 			if (mCurrentFieldOrItem == eStartStopItem)
 			{
+				mTargetIsISP = true;
 				if (mInSession)
 				{
 					mAVRStreamISP.Halt();	// Does nothing if not target
 					mSDHexSession.Halt();	// Does nothing if not source
 					mInSession = eIdle;
 					mPrevHexFileIndex = 0xFFFF;	// Force the filename to redraw (if SD source)
-					mPrevUseSDSource = false;	// Force the source to redraw (if SD source)
-				} else if (mUseSDSource)
+					mPrevSource = eUSBSource;	// Force the source to redraw (if SD source)
+				} else if (mSource != eUSBSource)
 				{
 					/*
 					*	The stored mFilename is truncated.  Filenames > 50 bytes
@@ -345,24 +372,29 @@ void SDHexLoader::EnterPressed(void)
 						char hexFilename[52];
 						hexFile.getName(hexFilename, 51);
 						hexFile.close();
-				
+
 						if (mOnlyUseISP ||
-							mUploadSpeed == 0)
+							mUploadSpeed == 0 ||
+							mSource == eSDBLSource)
 						{
-							// nullptr -> use contextual stream
-							mInSession = mSDHexSession.begin(hexFilename, nullptr, &mAVRStreamISP, UnixTime::Time());
+							// nullptr means "use contextual stream"
+							mInSession = mSDHexSession.begin(hexFilename, nullptr,
+												&mAVRStreamISP, mSource == eSDBLSource,
+													UnixTime::Time());
 						} else
 						{
 							Serial1.end();
 							Serial1.begin(mUploadSpeed);
-							// nullptr -> using HardwareSerial stream
-							mInSession = mSDHexSession.begin(hexFilename, &Serial1, nullptr, UnixTime::Time());
+							// nullptr means "using HardwareSerial USB stream"
+							mInSession = mSDHexSession.begin(hexFilename, &Serial1,
+												nullptr, UnixTime::Time());
+							mTargetIsISP = false;
 						}
 					}
 					if (mInSession)
 					{
 						mPrevHexFileIndex = 0xFFFF;	// Force the filename to redraw
-						mPrevUseSDSource = false;	// Force the source to redraw
+						mPrevSource = eUSBSource;	// Force the source to redraw
 					} else
 					{
 						mAVRStreamISP.Halt();	// Does nothing if not target
@@ -377,7 +409,7 @@ void SDHexLoader::EnterPressed(void)
 					mAVRStreamISP.SetSPIClock(((uint32_t)mISPClockIndex)*4000000);
 					mInSession = ePassThrough;
 				}
-				mMaxMainModeItem = (mUseSDSource && !mInSession )? eFilenameItem : eStartStopItem;
+				mMaxMainModeItem = (mSource != eUSBSource && !mInSession) ? eFilenameItem : eStartStopItem;
 			}
 			break;
 		case eSettingsMode:
@@ -459,15 +491,10 @@ void SDHexLoader::Update(void)
 	if (mInSession)
 	{
 		/*
-		*	If the target is ISP...
-		*	If the upload speed is zero, the only option is ISP OR
-		*	not using the SD as the source, the only option is ISP OR
-		*	forcing the use of ISP regardless of the source THEN
+		*	If the target is ISP THEN
 		*	give time to the AVRStreamISP.
 		*/
-		if (mUploadSpeed == 0 ||
-			!mUseSDSource ||
-			mOnlyUseISP)
+		if (mTargetIsISP)
 		{
 			/*
 			*	If there is an ISP fatal error...
@@ -477,7 +504,7 @@ void SDHexLoader::Update(void)
 				mInSession = eIdle;
 				mError = mAVRStreamISP.Error();
 				QueueMessage(eInternalISPDesc, eErrorNumDesc, eMainMode, eSourceItem);
-				if (mUseSDSource)
+				if (mSource != eUSBSource)
 				{
 					mSDHexSession.Halt();
 				}
@@ -485,7 +512,7 @@ void SDHexLoader::Update(void)
 			}
 		}
 		if (mInSession &&
-			mUseSDSource)
+			mSource != eUSBSource)
 		{
 			/*
 			*	If the session is still in progress THEN
@@ -493,7 +520,7 @@ void SDHexLoader::Update(void)
 			*/
 			if (mSDHexSession.Update())
 			{
-				mInSession = (mSDHexSession.Stage() & 0x20) ? eVerifying : eWriting;
+				mInSession = (mSDHexSession.Stage() & SDHexSession::eVerifyingMemory) ? eVerifying : eWriting;
 			/*
 			*	Else the session finished or there was an error...
 			*/
@@ -509,7 +536,7 @@ void SDHexLoader::Update(void)
 				}
 				mInSession = eIdle;
 				mPrevHexFileIndex = 0xFFFF;	// Force the filename to redraw
-				mPrevUseSDSource = false;	// Force the source to redraw
+				mPrevSource = eUSBSource;	// Force the source to redraw
 				mSDHexSession.Halt();
 				mAVRStreamISP.Halt();
 				UnixTime::ResetSleepTime();
@@ -649,11 +676,13 @@ void SDHexLoader::UpdateDisplay(void)
 			{
 				// When in session, disable the ability to change sources
 				if (updateAll ||
-					mPrevUseSDSource != mUseSDSource)
+					mPrevSource != mSource)
 				{
-					mPrevUseSDSource = mUseSDSource;
+					mPrevSource = mSource;
 					DrawItemP(0, kSourceStr, eWhite);
-					DrawItemValueP(mUseSDSource ? kSDStr : kUSBStr , mInSession ? eGray : eMagenta);
+					DrawItemValueP(mSource == eUSBSource ? kUSBStr :
+						(mSource == eSDSource ? kSDStr : kSDBLStr),
+							mInSession ? eGray : eMagenta);
 				}
 				if (updateAll ||
 					mPrevInSession != mInSession ||
@@ -670,10 +699,10 @@ void SDHexLoader::UpdateDisplay(void)
 						{
 							if (mInSession == eWriting)
 							{
-								DrawItemP(4, kWritingStr, eYellow);
+								DrawItemP(4, kWritingStr, eYellow, Config::kTextInset, true);
 							} else	// Verifying
 							{
-								DrawItemP(4, kVerifyingStr, eGreen);
+								DrawItemP(4, kVerifyingStr, eGreen, Config::kTextInset, true);
 							}
 							mPrevPercentage = 0xFF;	// Force the percentage to draw
 							DrawPercentComplete();
@@ -686,10 +715,12 @@ void SDHexLoader::UpdateDisplay(void)
 						*	SD is the source and a hex file is selected THEN
 						*	display "Start"
 						*/
-						if (mUseSDSource == false ||
+						if (mSource == eUSBSource ||
 							mHexFileIndex != 0)
 						{
-							DrawItemP(1, (mOnlyUseISP || !mUseSDSource || !mUploadSpeed) ?
+							DrawItemP(1, (mOnlyUseISP || mSource == eUSBSource
+											|| mSource == eSDBLSource
+											|| !mUploadSpeed) ?
 												kStartISPStr : kStartSerialStr, eGreen,
 												Config::kTextInset, true);
 						/*
@@ -711,7 +742,7 @@ void SDHexLoader::UpdateDisplay(void)
 				{
 					mPrevHexFileIndex = mHexFileIndex;
 					ClearLines(2, 2);
-					if (mUseSDSource && mHexFileIndex)
+					if (mSource != eUSBSource && mHexFileIndex)
 					{
 						DrawItem(2, mFilename, mInSession ? eGray : eMagenta);
 						DrawItem(3, mMCUDesc, mInSession ? eGray : eCyan);
@@ -915,7 +946,7 @@ void SDHexLoader::GoToMainMode(void)
 	{
 		mMode = eMainMode;
 		mCurrentFieldOrItem = eSourceItem;
-		mMaxMainModeItem = (mUseSDSource && !mInSession )? eFilenameItem : eStartStopItem;
+		mMaxMainModeItem = (mSource != eUSBSource && !mInSession )? eFilenameItem : eStartStopItem;
 		InitializeSelectionRect();
 	}
 }
@@ -1170,7 +1201,7 @@ void SDHexLoader::SetSDCardPresent(
 	*	move the selection frame to the first line.
 	*/
 	if (mMode == eMainMode &&
-		mUseSDSource)
+		mSource != eUSBSource)
 	{
 		mCurrentFieldOrItem = eSourceItem;
 	}

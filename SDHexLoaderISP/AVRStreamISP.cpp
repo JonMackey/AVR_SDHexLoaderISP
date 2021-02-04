@@ -27,7 +27,6 @@
 #include <stdio.h>
 #else
 #include <Arduino.h>
-#include "SDHexLoaderConfig.h"
 #endif
 #include "AVRConfig.h"
 
@@ -77,6 +76,7 @@ void AVRStreamISP::SetStream(
 #endif
 #ifdef DEBUG_AVR_STREAM
 	mReceiving = false;
+	mSerialBytes = 0;
 #endif
 }
 
@@ -225,15 +225,20 @@ uint8_t AVRStreamISP::read(void)
 	if (!mReceiving)
 	{
 		mReceiving = true;
+		mSerialBytes = 0;
 		Serial1.print('\n');
 		Serial1.print('<');
 	}
-	Serial1.print(' ');
-	if (thisChar < 0x10)
+	//if (mSerialBytes < 20)	// Uncomment when debugging USB to avoid timeout
 	{
-		Serial1.print('0');
+		//mSerialBytes++;	// Uncomment when debugging USB to avoid timeout
+		Serial1.print(' ');
+		if (thisChar < 0x10)
+		{
+			Serial1.print('0');
+		}
+		Serial1.print(thisChar, HEX);
 	}
-	Serial1.print(thisChar, HEX);
 #endif
 #endif
   	return(thisChar);
@@ -259,15 +264,20 @@ void AVRStreamISP::write(
 	if (mReceiving)
 	{
 		mReceiving = false;
+		mSerialBytes = 0;
 		Serial1.write('\n');
 		Serial1.write('>');
 	}
-	Serial1.print(' ');
-	if (inChar < 0x10)
+	//if (mSerialBytes < 20)	// Uncomment when debugging USB to avoid timeout
 	{
-		Serial1.write('0');
+		//mSerialBytes++;	// Uncomment when debugging USB to avoid timeout
+		Serial1.print(' ');
+		if (inChar < 0x10)
+		{
+			Serial1.write('0');
+		}
+		Serial1.print(inChar, HEX);
 	}
-	Serial1.print(inChar, HEX);
 #endif
 #endif
 }

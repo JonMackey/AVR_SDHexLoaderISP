@@ -18,6 +18,11 @@
 *	Please maintain this license information along with authorship and copyright
 *	notices in any redistribution of this code.
 *
+*
+*	This isn't a very flexible class at this point.  It originally only
+*	supported loading the application section.  Support for setting fuses, 
+*	lock bits and bootloader, if any, was addded later.  To differentiate
+*	between the 4 possible operations the mOperation member was added.
 */
 
 #include "SDHexSession.h"
@@ -29,10 +34,21 @@
 #include "SDHexLoaderConfig.h"
 #endif
 #include "AVRStreamISP.h"
+#include "UnixTime.h"
 
 #ifndef __MACH__
 const uint32_t	kSessionTimeout = 2000;	// milliseconds
 #endif
+const char kBootloaderPathPrefixStr[] PROGMEM = "bootloaders/B";
+const char kHexExtensionStr[] PROGMEM = ".hex";
+
+const SDHexSession::SFuseInst SDHexSession::kFuseInst[] =
+{
+	{0x50, 8, 0xA4},	// Extended
+	{0x58, 8, 0xA8},	// High
+	{0x50, 0, 0xA0}		// Low
+};
+
 
 /******************************** SDHexSession ********************************/
 SDHexSession::SDHexSession(void)
@@ -41,13 +57,38 @@ SDHexSession::SDHexSession(void)
 }
 
 /*********************************** begin ************************************/
+/*
+*	Supported functions:
+*	- load + verify
+*	- load fuses + load bootloader (if applicable) + verify (if bootloader)
+*	For load + verify to Serial, inStream should point to the Serial1 stream.
+*	For load + verify to ISP, inStream should be nil
+*	For load fuses (and bootloader if applicable), inStream should be nil
+*	because this takes place via the ISP.
+*/
 bool SDHexSession::begin(
 	const char*		inPath,
 	Stream*			inStream,
 	AVRStreamISP*	inAVRStreamISP,
+	bool			inSetFusesAndBootloader,
 	uint32_t		inTimestamp)
 {
 	mStream = inStream == nullptr ? &mContextualStream : inStream;
+	/*
+	*	The AVRStreamISP is saved so that the SPI speed can be adjusted before
+	*	and after setting fuses.  Before fuses are set the SPI speed is set low.
+	*	This low speed is assumed because the AVR default is to use the internal
+	*	RC oscillator resulting in a 1 MHz instruction clock.  After the fuses
+	*	are set mAVRStreamISP is used to set the SPI speed to whatever is
+	*	reflected in the configuration file.
+	*
+	*	Because AVR fuse settings are latched when entering programming mode,
+	*	programming mode is re-entered in order for the new fuse settings to
+	*	take effect.  This is only done if the fuses are actually changed.  In
+	*	any case, the low SPI speed is used until after the fuse settings are
+	*	verified.
+	*/
+	mAVRStreamISP = inAVRStreamISP;
 	bool	loadingFlash = true;	// Is .hex file
 	bool success = mStream != nullptr;
 	if (success)
@@ -64,25 +105,81 @@ bool SDHexSession::begin(
 		if (success)
 		{
 			memcpy(&mConfig, &avrConfig.Config(), sizeof(SAVRConfig));
-			success = IntelHexFile::begin(inPath);
-			if (success)
+			if (inSetFusesAndBootloader)
 			{
 				/*
-				*	If the config doesn't contain the byte count THEN
-				*	estimate its size from the hex file. The estimation takes
-				*	time depending on the size of the hex file.
+				*	There is only a subset of the AVR family supported by this
+				*	loader.  If the loader doesn't support setting this specific
+				*	AVR's fuses, the lock mask will be zero.
+				*	The lock mask is extracted from the avrdude.conf file's
+				*	memory "lock" setting for this AVR.  The last byte of the
+				*	4 byte instruction must include an 'i', meaning it is the
+				*	input byte for the write lock bits instruction, of the
+				*	form: 0xAC 0xE0 0x00 <lock byte>.
 				*/
-				if (mConfig.byteCount == 0)
+				success = mConfig.lockBits[0] != 0 && inAVRStreamISP != nullptr;
+				if (success)
 				{
-					mConfig.byteCount = EstimateLength();
-				}
-			#ifdef __MACH__
-				fprintf(stderr, "%d\n", mConfig.byteCount);
-			#endif
-				if (inAVRStreamISP)
-				{
+					/*
+					*	If there is a bootloader THEN
+					*	setup the path to point to the bootloader.
+					*	Bootloaders are stored in the root /bootloaders folder.
+					*	All bootloaders have 'B' as the prefix and the decimal
+					*	string value of mConfig.bootloader as the suffix.
+					*	Ex: if mConfig.bootloader is 12, the filename is B12, and
+					*	the full path would be /bootloaders/B12.hex
+					*/
+					if (mConfig.bootloader)
+					{
+						mOperation = eSetFusesAndBootloader;
+						strcpy_P(configPath, kBootloaderPathPrefixStr);
+						pathLen = strlen(configPath);
+						UnixTime::Uint16ToDecStr(mConfig.bootloader, &configPath[pathLen]);
+						pathLen = strlen(configPath);
+						strcpy_P(&configPath[pathLen], kHexExtensionStr);
+						loadingFlash = true;
+						success = IntelHexFile::begin(configPath);
+						/*
+						*	If the bootloader exists THEN
+						*	estimate its length.
+						*/ 
+						if (success)
+						{
+							mConfig.byteCount = EstimateLength();
+						}
+					} else
+					{
+						mOperation = eSetFuses;
+					}
 					inAVRStreamISP->SetStream(&mContextualStream);
-					inAVRStreamISP->SetAVRConfig(avrConfig.Config());
+					inAVRStreamISP->SetSPIClock(0);	// Assume 1 MHz fCPU
+				} else
+				{
+					mError = eLockErr;
+				}
+			} else
+			{
+				mOperation = loadingFlash ? eProgramFlash : eProgramEEPROM;
+				success = IntelHexFile::begin(inPath);
+				if (success)
+				{
+					/*
+					*	If the config doesn't contain the byte count THEN
+					*	estimate its size from the hex file. The estimation takes
+					*	time depending on the size of the hex file.
+					*/
+					if (mConfig.byteCount == 0)
+					{
+						mConfig.byteCount = EstimateLength();
+					}
+				#ifdef __MACH__
+					fprintf(stderr, "%d\n", mConfig.byteCount);
+				#endif
+					if (inAVRStreamISP)
+					{
+						inAVRStreamISP->SetStream(&mContextualStream);
+						inAVRStreamISP->SetAVRConfig(avrConfig.Config());
+					}
 				}
 			}
 		}
@@ -92,6 +189,7 @@ bool SDHexSession::begin(
 		mSyncRetries = 0;
 		mError = 0;
 		mSerialISP = !inAVRStreamISP;
+		mCmdHandler = &SDHexSession::SetDevice;
 		/*
 		*	When using AVRStreamISP, AVRStreamISP manages the reset line.
 		*	
@@ -125,16 +223,17 @@ bool SDHexSession::begin(
 			delay(300);
 		}
 	#endif
-		mContextualStream.flush();
-		//mUsingInternalISP = inAVRStreamISP != nullptr;
-		mCmdHandler = &SDHexSession::SetDevice;
+		/*
+		*	Setup the contextual stream even if the stream is serial.
+		*/
+		mContextualStream.flush();		
 		{
 			mContextualStream.ReadFrom1(true);
-			GetSync(false);
+			GetSync(false);	// Load the 1st command for either stream
 			mContextualStream.ReadFrom1(false);
 		}
+		mStage = eVerifySignature;
 		// Page variables:
-		mStage = loadingFlash ? eLoadingFlash : eLoadingEEPROM;
 		mBytesPerPage = loadingFlash ? mConfig.flashPageSize : mConfig.eepromPageSize;
 		mWordsPerPage = mBytesPerPage >> 1;
 		mBytesProcessed = 0;
@@ -146,7 +245,7 @@ bool SDHexSession::begin(
 		mCurrentAddressH = (!loadingFlash || (mConfig.devcode < 0xB0)) ? 0 : 0xFF;
 		mDataIndex = 0;
 		// Initializing mCurrentPageAddress to 0xFFFF will generate the initial Load
-		// Address command when the first address is 0.
+		// Address command for the first address.
 		mCurrentPageAddress = 0xFFFF;
 	#ifdef SUPPORT_REPLACEMENT_DATA
 		// See ReplaceData() for an explanation of what replacement data is.
@@ -385,7 +484,28 @@ void SDHexSession::EnterProgramMode(
 		mCmdHandler = &SDHexSession::EnterProgramMode;
 	} else if (ResponseStatusOK())
 	{
-		ReadSignature(false);
+		if (mStage == eVerifySignature)
+		{
+			ReadSignature(false);
+		} else if (mStage == eVerifyUnlocked)
+		{
+			// This is only done when setting fuses (with or without bootloader.)
+			mStageModifier = 0;
+			VerifyUnlocked(false);
+		} else if (mOperation == eSetFusesAndBootloader)
+		{
+			// This is only done when loading a bootloader. (called via VerifyFuse)
+			// Now that the fuses have been verified, adjust the SPI speed to
+			// the max for fCPU.
+			mAVRStreamISP->SetAVRConfig(mConfig);
+			ProcessPage(false);
+		} else // assumed to be mOperation == eSetFuses
+		{
+			// This is done when just the fuses are being set (no bootloader)
+			mStage = eVerifyLockBits;
+			mStageModifier = 0;
+			VerifyLockBits(false);
+		}
 	}
 }
 
@@ -429,13 +549,7 @@ void SDHexSession::ReadSignature(
 		if (!mError &&
 			ResponseStatusOK())
 		{
-			if (mStage == eLoadingFlash)
-			{
-				ChipErase(false);
-			} else
-			{
-				ProcessPage(false);
-			}
+			ChipErase(false);
 		}
 	}
 }
@@ -458,9 +572,9 @@ void SDHexSession::SetupUniversal(
 
 /********************************* ChipErase **********************************/
 /*
-*	This will only erase the chip if not targeting a bootloader.
-*	Most bootloaders ignore this command and self-erase as needed when writing
-*	pages.
+*	This will only erase the chip when done through the ISP, not through a
+*	bootloader.  Most bootloaders ignore this command and self-erase as needed
+*	when writing pages.
 */
 void SDHexSession::ChipErase(
 	bool	inIsResponse)
@@ -481,7 +595,213 @@ void SDHexSession::ChipErase(
 			mStream->read();	// Skip response
 			if (ResponseStatusOK())
 			{
-				ProcessPage(false);
+				if (mOperation & eIsProgramming)	// Either flash or EEPROM
+				{
+					mStage = mOperation == eProgramFlash ? eLoadingFlash : eLoadingEEPROM;
+					ProcessPage(false);
+				} else	// Else, setting fuses, with or without a bootloader
+				{
+					// Re-enter program mode to latch new lock bits which should
+					// have been cleared (i.e. set to 0xFF) after chip erase.
+					mStage = eVerifyUnlocked;
+					EnterProgramMode(false);
+				}
+			}
+		}
+	}
+}
+
+/******************************* VerifyUnlocked *******************************/
+void SDHexSession::VerifyUnlocked(
+	bool	inIsResponse)
+{
+	if (!inIsResponse)
+	{
+		// Read the lock bits as per AVR Serial Programming Instruction Set
+		SetupUniversal(0x58, 0, 0, 0);
+		mCmdHandler = &SDHexSession::VerifyUnlocked;
+	} else
+	{
+		if (WaitForAvailable(1))
+		{
+			uint8_t	lockBits = mStream->read() & mConfig.lockBits[SAVRConfig::eMask];
+			if (ResponseStatusOK())
+			{
+				if (lockBits == mConfig.lockBits[SAVRConfig::eUnlock])
+				{
+					/*
+					*	If the 2nd verification passed THEN
+					*	move to the next stage.
+					*/
+					if (mStageModifier & eFuseVerified)
+					{
+						mStage = eVerifyExtendedFuse;
+						mStageModifier = 0;
+						mFuseInst = kFuseInst[0];
+						VerifyFuse(false);
+					} else
+					{
+						mStageModifier |= eFuseVerified;
+						VerifyUnlocked(false);
+					}
+				} else
+				{
+					mError = eUnlockErr;
+				}
+			}
+		}
+	}
+}
+
+/********************************* VerifyFuse *********************************/
+/*
+*	Handler used to verify the extended, high and low fuses, in that order.
+*	If first verification fails an attempt is made to set the fuse (only once.)
+*	If subsequent verifications fail the session fails with a fuse error.
+*	This mimics the avrdude behavior.
+*/
+void SDHexSession::VerifyFuse(
+	bool	inIsResponse)
+{
+	if (!inIsResponse)
+	{
+		// Read the fuse as per AVR Serial Programming Instruction Set
+		SetupUniversal(mFuseInst.readInstByte1, mFuseInst.readInstByte2, 0, 0);
+		mCmdHandler = &SDHexSession::VerifyFuse;
+	} else
+	{
+		if (WaitForAvailable(1))
+		{
+			uint8_t	fuseVal = mStream->read();
+			if (ResponseStatusOK())
+			{
+					//Serial1.print("FV = ");
+					//Serial1.print(fuseVal, HEX);
+					//Serial1.print(", EFV = ");
+					//Serial1.print(mConfig.fuses[mStage - eVerifyFuse], HEX);
+					//Serial1.print('\n');
+				if (mStageModifier & eFuseWriteResponse)
+				{
+					mStageModifier &= ~eFuseWriteResponse;
+					VerifyFuse(false);
+				// mStage is assumed to be one of eVerifyXXXFuse, so subtracting
+				// eVerifyFuse results in an index 0 to 2
+				} else if (fuseVal == mConfig.fuses[mStage - eVerifyFuse])
+				{
+					/*
+					*	If the 2nd verification passed THEN
+					*	move to the next stage.
+					*/
+					if (mStageModifier & eFuseVerified)
+					{
+						if (mStage < eVerifyLowFuse)
+						{
+							mStage++;
+							mStageModifier = 0;
+							mFuseInst = kFuseInst[mStage - eVerifyFuse];
+							VerifyFuse(false);
+						} else
+						{
+							mStage = eLoadingFlash;
+							EnterProgramMode(false);
+						}
+					} else
+					{
+						mStageModifier = eFuseVerified;
+						VerifyFuse(false);
+					}
+				/*
+				*	Else, if there was already a write attempt OR
+				*	the 2nd verification just failed THEN
+				*	fail.
+				*/
+				} else if (mStageModifier)
+				{
+					mError = eFuseErr + (mStage - eVerifyFuse);
+				/*
+				*	Else, attempt to write the extended fuse value.
+				*/
+				} else
+				{
+					mStageModifier = eFuseWriteResponse + eFuseWritten;
+					//Serial1.print("SFV = ");
+					//Serial1.print(mConfig.fuses[mStage - eVerifyFuse], HEX);
+					//Serial1.print('\n');
+					SetupUniversal(0xAC, mFuseInst.writeInstByte2, 0, mConfig.fuses[mStage - eVerifyFuse]);
+				#ifndef __MACH__
+					mCmdDelay.Set(mConfig.lockMinWriteDelay);
+					mCmdDelay.Start();
+				#endif
+				}
+			}
+		}
+	}
+}
+
+/******************************* VerifyLockBits *******************************/
+/*
+*	Handler used to verify the lock bits.
+*	If first verification fails an attempt is made to set the lock bits (only once.)
+*	If subsequent verifications fail the session fails with a lock error.
+*	This mimics the avrdude behavior.
+*/
+void SDHexSession::VerifyLockBits(
+	bool	inIsResponse)
+{
+	if (!inIsResponse)
+	{
+		// Read the lock bits as per AVR Serial Programming Instruction Set
+		SetupUniversal(0x58, 0, 0, 0);
+		mCmdHandler = &SDHexSession::VerifyLockBits;
+	} else
+	{
+		if (WaitForAvailable(1))
+		{
+			uint8_t	lockBits = mStream->read() & mConfig.lockBits[SAVRConfig::eMask];
+			if (ResponseStatusOK())
+			{
+				if (mStageModifier & eFuseWriteResponse)
+				{
+					mStageModifier &= ~eFuseWriteResponse;
+					VerifyLockBits(false);
+				} else if (lockBits == mConfig.lockBits[SAVRConfig::eLock])
+				{
+					/*
+					*	If the 2nd verification passed THEN
+					*	we're done.
+					*/
+					if (mStageModifier & eFuseVerified)
+					{
+						LeaveProgramMode(false);
+					} else
+					{
+						mStageModifier = eFuseVerified;
+						VerifyLockBits(false);
+					}
+				/*
+				*	Else, if there was already a write attempt OR
+				*	the 2nd verification just failed THEN
+				*	fail.
+				*/
+				} else if (mStageModifier)
+				{
+					mError = eLockErr;
+				/*
+				*	Else, attempt to write the lockBits.
+				*/
+				} else
+				{
+					mStageModifier = eFuseWriteResponse + eFuseWritten;
+					// As per AVR docs, unused lock bits should be set. ORing
+					// the lock value with the ~mask satisfies this requirement.
+					SetupUniversal(0xAC, 0xE0, 0,
+										(~mConfig.lockBits[SAVRConfig::eMask]) |
+											mConfig.lockBits[SAVRConfig::eLock]);
+				#ifndef __MACH__
+					mCmdDelay.Set(mConfig.lockMinWriteDelay);
+					mCmdDelay.Start();
+				#endif
+				}
 			}
 		}
 	}
@@ -530,22 +850,22 @@ void SDHexSession::LoadExtAddress(
 #ifdef SUPPORT_REPLACEMENT_DATA
 /******************************** ReplaceData *********************************/
 /*
-*	My SDSensor.ino bases the unique ID used on the CAN bus on the timestamp of
-*	when it was compiled.  There are several SDSensor boards on the bus, and
+*	My DCSensor.ino bases the unique ID used on the CAN bus on the timestamp of
+*	when it was compiled.  There are several DCSensor boards on the bus, and
 *	when updating the software, each ID needs to be unique.  This requirement is
 *	satisified when using the Arduino IDE to upload the sketch.  The code below
 *	is a solution when SDHexSession is used to load the sketch on several boards
 *	with the same SD hex file. The SDHexSession::begin() function is passed the
 *	unix uint32_t timestamp as read from the loader's RTC.  This 32 bit value is
 *	divided up into 4 bytes placed in mReplacementData.  A new timestamp is
-*	passed each time a SDSensor board is loaded.
+*	passed each time a DCSensor board is loaded.
 *
-*	This proof of concept only targets sketches named SDSensor.ino that have a
+*	This proof of concept only targets sketches named DCSensor.ino that have a
 *	global variable named kTimestamp.  The address of kTimestamp within the
-*	SDSensor.ino binary is determined by the HexLoaderUtility application by
+*	DCSensor.ino binary is determined by the HexLoaderUtility application by
 *	reading the DCSensor.ino.elf file that's generated whenever a sketch is
 *	compiled by the Arduino IDE.  This address is written to the configuration
-*	file SDSensor.ino.txt with the key "timestamp".
+*	file DCSensor.ino.txt with the key "timestamp".
 */
 void SDHexSession::ReplaceData(void)
 {
@@ -670,7 +990,7 @@ void SDHexSession::ProcessPage(
 			*	everything.
 			*/
 			WaitForAvailableForWrite(4);
-			mStream->write(mStage <= eLoadingFlash ? STK_PROG_PAGE : STK_READ_PAGE);	// 0x64 : 0x74
+			mStream->write(mStage & eLoadingMemory ? STK_PROG_PAGE : STK_READ_PAGE);	// 0x64 : 0x74
 			mStream->write((uint8_t)(mBytesPerPage>>8));
 			mStream->write((uint8_t)(mBytesPerPage));
 			mBytesProcessed+=mBytesPerPage;
@@ -679,13 +999,13 @@ void SDHexSession::ProcessPage(
 			{
 				mPercentageProcessed = 100;
 			}
-			mStream->write(mStage & ~0x20);	// ~0x20 changes uppercase 'e' or 'f' to 'E' or 'F'
+			mStream->write((mStage & eIsFlash) ? 'F' : 'E');
 			mCmdHandler = &SDHexSession::ProcessPage;
 			/*
 			*	If loading Flash or EEPROM THEN
 			*	load the stream with the page data.
 			*/
-			if (mStage <= eLoadingFlash)
+			if (mStage & eLoadingMemory)
 			{
 				if (!LoadPageFromSD(wordAddress, pageAddress, nextPageAddress, mStream))
 				{
@@ -704,7 +1024,7 @@ void SDHexSession::ProcessPage(
 			*	If verifying Flash or EEPROM THEN
 			*	compare the stream with the page data returned.
 			*/
-			if (mStage >= eVerifyingEEPROM)
+			if (mStage & eVerifyingMemory)
 			{
 				/*
 				*	The contextual stream should be read-from-1 / write-to-2
@@ -745,12 +1065,12 @@ void SDHexSession::ProcessPage(
 		}
 	} else if (mRecordType == eEndOfFileRecord)
 	{
-		if (mStage <= eLoadingFlash)
+		if (mStage & eLoadingMemory)
 		{
 			if (ResponseStatusOK())
 			{
 				Rewind();
-				mStage |= 0x20;	// Change from "Loading" to "Verifying"
+				mStage += eLoadingMemory;	// Change from "Loading" to "Verifying"
 				mCurrentPageAddress = 0xFFFF;
 				mBytesProcessed = 0;
 				mPercentageProcessed = 0;
@@ -774,9 +1094,14 @@ void SDHexSession::ProcessPage(
 			#endif
 				ProcessPage(false);
 			}
-		} else
+		} else if (mOperation & eIsProgramming)
 		{
 			LeaveProgramMode(false);
+		} else
+		{
+			mStage = eVerifyLockBits;
+			mStageModifier = 0;
+			VerifyLockBits(false);
 		}
 	}
 }
@@ -788,14 +1113,13 @@ bool SDHexSession::LoadPageFromSD(
 	uint32_t	inNextPageAddress,
 	Stream*		inStream)
 {
-	
 	/*
 	*	avrdude always loads full blocks even when there
 	*	isn't enough hex data.  This mimics that behavior.
 	*/
 	if (inPageAddress < inWordAddress)
 	{
-		for (uint16_t i = inWordAddress << 1; i; i--)
+		for (uint16_t i = (inWordAddress-inPageAddress) << 1; i; i--)
 		{
 			WaitForAvailableForWrite(1);
 			inStream->write(0xFF);

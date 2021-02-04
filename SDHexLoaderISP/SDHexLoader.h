@@ -71,16 +71,17 @@ protected:
 	uint8_t					mPrevPercentage;
 	uint8_t					mISPClockIndex;
 	uint8_t					mPrevISPClockIndex;
+	uint8_t					mSource;
+	uint8_t					mPrevSource;
 	bool					mSDCardPresent;
 	bool					mIgnoreButtonPress;
 	bool					mSleepEnabled;
 	bool					mPrevSleepEnabled;
 	bool					mDisplaySleeping;
 	bool					mPrevIsPM;
-	bool					mUseSDSource;	// Else use USB
-	bool					mPrevUseSDSource;
 	bool					mOnlyUseISP;	// Else auto based on mUploadSpeed
 	bool					mPrevOnlyUseISP;
+	bool					mTargetIsISP;	// Only valid during a session.  Used by Update()
 	bool					mIsHexFile;
 	uint8_t					mInSession;
 	uint8_t					mPrevInSession;
@@ -187,6 +188,14 @@ protected:
 		eLoadStatusItem,
 		eMCUNameItem
 	};
+	enum ESource
+	{
+		// There are sssumptions in code that eUSBSource be value 0 and
+		// eSDSource and eSDBLSource sources are non-zero.
+		eUSBSource,
+		eSDSource,
+		eSDBLSource
+	};
 	enum ESettingsItem
 	{
 		eTimeItem,
@@ -225,6 +234,12 @@ protected:
 		eHexDataErrorDesc,
 		eSignatureErrorDesc,
 		eVerifyFailedDesc,
+		eUnlockErrorDesc,
+		eLockErrorDesc,
+		eEFuseErrorDesc,
+		eHFuseErrorDesc,
+		eLFuseErrorDesc,
+
 		eSuccessDesc,
 	//	eYesItemDesc,
 	//	eNoItemDesc,

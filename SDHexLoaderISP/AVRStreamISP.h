@@ -34,14 +34,9 @@
 #include <inttypes.h>
 #ifdef __MACH__
 #define Stream	ContextualStream
-#define DEBUG_AVR_STREAM	1
 #else
 #include <SPI.h>
-/*
-*	Defining DEBUG_AVR_STREAM will send a dump of the SDK500 commands/responses
-*	to Serial1.
-*/
-//#define DEBUG_AVR_STREAM	1
+#include "SDHexLoaderConfig.h"
 #endif
 
 class Stream;
@@ -54,6 +49,8 @@ public:
 	void					begin(void);
 	void					SetStream(
 								Stream*					inStream);
+	Stream*					GetStream(void)
+								{return(mStream);}
 	void					SetSPIClock(
 								uint32_t				inClock = 0);
 	bool					Update(void);
@@ -76,6 +73,7 @@ public:
 	};
 protected:
 	Stream*		mStream;
+	//uint32_t	mTimeTillSend;
 #ifdef __MACH__
 	uint32_t	mAddress;	// 2 byte word address
 #else
@@ -103,6 +101,7 @@ protected:
 #endif
 #ifdef DEBUG_AVR_STREAM
 	bool		mReceiving;
+	uint8_t		mSerialBytes;
 #endif
 
 #ifndef __MACH__

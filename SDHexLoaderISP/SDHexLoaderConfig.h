@@ -28,6 +28,17 @@
 #define HEX_LOADER_VER	13	// 1.3
 #define ROTATE_DISPLAY	1	// Rotate display and buttons by 90 degrees
 
+#ifdef __MACH__
+#define DEBUG_AVR_STREAM	1
+#else
+/*
+*	Defining DEBUG_AVR_STREAM will send a dump of the SDK500 commands/responses
+*	to Serial1 for anything sent to AVRStreamISP.  When set, obviously the SD
+*	source should not be used for anything that uses Serial1.
+*/
+//#define DEBUG_AVR_STREAM	1
+#endif
+
 namespace Config
 {
 	const uint8_t	kUnusedPinB0		= 0;	// PB0

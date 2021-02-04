@@ -50,6 +50,7 @@ public:
 								const char*				inPath,
 								Stream*					inStream,
 								AVRStreamISP*			inAVRStreamISP = nullptr,
+								bool					inSetFusesAndBootloader = false,
 								uint32_t				inTimestamp = 0);
 	bool					Update(void);
 	uint8_t					Error(void) const
@@ -67,24 +68,63 @@ public:
 								{return(mPercentageProcessed);}
 	enum EErrors
 	{
+		// All errors must be reflected in SDHexLoader.cpp & .h
 		eNoErr,
 		eTimeoutErr,
 		eSyncErr,
 		eUnknownErr,
 		eLoadHexDataErr,
 		eSignatureErr,
-		eVerificationErr
+		eVerificationErr,
+		eUnlockErr,
+		eLockErr,
+		eFuseErr,
+		eEFuseErr = eFuseErr,
+		eHFuseErr,
+		eLFuseErr
 	};
 	enum EStage
 	{
-		eLoadingEEPROM = 'E',
-		eLoadingFlash = 'F',
-		eVerifyingEEPROM = 'e',
-		eVerifyingFlash = 'f',
-		eSessionCompleted = 'x'
+		eSessionCompleted,		// 0
+		eChipErase,
+		eVerifySignature,
+		eVerifyUnlocked,
+		eVerifyFuse,
+		eVerifyExtendedFuse		= eVerifyFuse,
+		eVerifyHighFuse,
+		eVerifyLowFuse,
+		eVerifyLockBits,		// 7
+		// Bit 0 set is flash, cleared is EEPROM
+		eIsFlash				= 1,	// For both eLoadingXX and eVerifyingXX
+		eLoadingMemory			= 0x08,
+		eLoadingEEPROM			= eLoadingMemory,
+		eLoadingFlash,
+		eVerifyingMemory		= 0x10,
+		eVerifyingEEPROM		= eVerifyingMemory,
+		eVerifyingFlash,
+
+		eFuseWritten			= 0x20,	// Stage modifier
+		eFuseWriteResponse		= 0x40,	// Stage modifier
+		eFuseVerified			= 0x80	// Stage modifier
+	};
+	enum EOperation
+	{
+		eIsProgramming			= 1,
+		eProgramFlash			= eIsProgramming,
+		eProgramEEPROM			= 3,
+		eSetFuses				= 0x04,
+		eSetFusesAndBootloader	= 0x08
 	};
 protected:
+	struct SFuseInst
+	{
+		uint8_t	readInstByte1;
+		uint8_t	readInstByte2;
+		uint8_t	writeInstByte2;
+	};
+	SFuseInst		mFuseInst;
 	Stream*			mStream;
+	AVRStreamISP*	mAVRStreamISP;
 	SAVRConfig		mConfig;
 	ContextualStream mContextualStream;
 	CmdHandler		mCmdHandler;
@@ -104,11 +144,15 @@ protected:
 	uint8_t			mSyncRetries;
 	uint8_t			mError;
 	uint8_t			mStage;
+	uint8_t			mStageModifier;
+	uint8_t			mOperation;
 	bool			mSerialISP;
 #ifdef SUPPORT_REPLACEMENT_DATA
 	uint16_t		mReplacementAddress;
 	uint8_t			mReplacementDataIndex;
 	uint8_t			mReplacementData[4];
+	static const SFuseInst	kFuseInst[];
+
 	
 	void					ReplaceData(void);
 #endif
@@ -133,6 +177,12 @@ protected:
 	void					ReadSignature(
 								bool					inIsResponse);
 	void					ChipErase(
+								bool					inIsResponse);
+	void					VerifyUnlocked(
+								bool					inIsResponse);
+	void					VerifyFuse(
+								bool					inIsResponse);
+	void					VerifyLockBits(
 								bool					inIsResponse);
 	void					LoadAddress(
 								bool					inIsResponse);
