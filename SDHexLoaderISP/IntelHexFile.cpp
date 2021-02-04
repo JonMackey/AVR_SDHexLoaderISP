@@ -159,7 +159,7 @@ bool IntelHexFile::NextRecord(void)
 						{
 							case 0:	// Data
 								dataIndex = 0;
-								field = 9;	// field+1 = 10 -> 26 is data/default
+								field = 11;	// field+1 = 12 -> 28 is data/default
 								continue;
 							case 1:	// End Of File
 								mEndOfFile = true;
@@ -167,6 +167,10 @@ bool IntelHexFile::NextRecord(void)
 								continue;
 							case 2: // Extended Segment Address
 								// Extended Segment Address High Byte (field+1 = 5)
+								mByteCount = 0;
+								continue;
+							case 3: // Start Segment Address
+								field = 7;	// CS:IP (field+1 = 8)
 								mByteCount = 0;
 								continue;
 							default: // The other record types can be treated as errors.
@@ -193,6 +197,13 @@ bool IntelHexFile::NextRecord(void)
 							NextChar();
 						}
 						break;	// Exit. checksum should be zero at this point.
+					case 8:		// Start Segment Address CS high (ignore)
+					case 9:		// Start Segment Address CS low (ignore)
+					case 10:	// Start Segment Address IP high (ignore)
+						continue;
+					case 11:	// Start Segment Address IP low (ignore)
+						field = 6;	// Checksum (field+1 = 7)
+						continue;
 					default:	// Data
 						mData[dataIndex++] = thisByte;
 						if (dataIndex < mByteCount)
@@ -268,11 +279,11 @@ uint32_t IntelHexFile::EstimateLength(void)
 					}
 					break;
 				}
-				uint16_t	lastAddress = 0;
+				uint32_t	lastAddress = 0;
 				// Get the address of the last data byte
 				while (NextRecord() && RecordType() == eDataRecord)
 				{
-					lastAddress = Address() + ByteCount();
+					lastAddress = (uint32_t)Address() + ByteCount();
 				}
 				/*
 				*	Hex lines supported by this class have a maximum of 16 data

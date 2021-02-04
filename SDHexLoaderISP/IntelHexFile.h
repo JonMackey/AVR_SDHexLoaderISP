@@ -65,8 +65,8 @@ public:
 		eDataRecord,
 		eEndOfFileRecord,
 		eExtendedSegmentAddress,
-		/*eStartSegmentAddress,
-		eExtendedLinearAddress,
+		eStartSegmentAddress,
+		/*eExtendedLinearAddress,
 		eStartLinearAddress,*/
 		eInvalidRecordType
 	};
