@@ -25,7 +25,7 @@
 #include <inttypes.h>
 
 #define BAUD_RATE	19200
-#define HEX_LOADER_VER	13	// 1.3
+#define HEX_LOADER_VER	14	// v1.4, set to 13 if using board v1.3
 #define ROTATE_DISPLAY	1	// Rotate display and buttons by 90 degrees
 
 #ifdef __MACH__

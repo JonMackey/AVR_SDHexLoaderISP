@@ -447,6 +447,7 @@ void SDHexLoader::EnterPressed(void)
 				}
 				mMode = eSettingsMode;
 				mCurrentFieldOrItem = eSetTimeItem;
+				UnixTime::ResetSleepTime();	// Otherwise it will immediately go to sleep because of the time change
 			}
 			break;
 		case eMessageMode:
