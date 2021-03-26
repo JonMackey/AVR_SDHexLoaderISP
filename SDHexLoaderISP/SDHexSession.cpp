@@ -668,6 +668,12 @@ void SDHexSession::VerifyFuse(
 		// Read the fuse as per AVR Serial Programming Instruction Set
 		SetupUniversal(mFuseInst.readInstByte1, mFuseInst.readInstByte2, 0, 0);
 		mCmdHandler = &SDHexSession::VerifyFuse;
+	#ifndef __MACH__
+		// Avrdude delays after each universal command sent.
+		// When this delay is removed, the set transaction below fails.
+		mCmdDelay.Set(mConfig.lockMinWriteDelay);
+		mCmdDelay.Start();
+	#endif
 	} else
 	{
 		if (WaitForAvailable(1))
@@ -675,11 +681,6 @@ void SDHexSession::VerifyFuse(
 			uint8_t	fuseVal = mStream->read();
 			if (ResponseStatusOK())
 			{
-					//Serial1.print("FV = ");
-					//Serial1.print(fuseVal, HEX);
-					//Serial1.print(", EFV = ");
-					//Serial1.print(mConfig.fuses[mStage - eVerifyFuse], HEX);
-					//Serial1.print('\n');
 				if (mStageModifier & eFuseWriteResponse)
 				{
 					mStageModifier &= ~eFuseWriteResponse;
@@ -719,14 +720,11 @@ void SDHexSession::VerifyFuse(
 				{
 					mError = eFuseErr + (mStage - eVerifyFuse);
 				/*
-				*	Else, attempt to write the extended fuse value.
+				*	Else, attempt to write the fuse value.
 				*/
 				} else
 				{
 					mStageModifier = eFuseWriteResponse + eFuseWritten;
-					//Serial1.print("SFV = ");
-					//Serial1.print(mConfig.fuses[mStage - eVerifyFuse], HEX);
-					//Serial1.print('\n');
 					SetupUniversal(0xAC, mFuseInst.writeInstByte2, 0, mConfig.fuses[mStage - eVerifyFuse]);
 				#ifndef __MACH__
 					mCmdDelay.Set(mConfig.lockMinWriteDelay);
@@ -753,6 +751,12 @@ void SDHexSession::VerifyLockBits(
 		// Read the lock bits as per AVR Serial Programming Instruction Set
 		SetupUniversal(0x58, 0, 0, 0);
 		mCmdHandler = &SDHexSession::VerifyLockBits;
+	#ifndef __MACH__
+		// Avrdude delays after each universal command sent.
+		// When this delay is removed, the set transaction below may fail.
+		mCmdDelay.Set(mConfig.lockMinWriteDelay);
+		mCmdDelay.Start();
+	#endif
 	} else
 	{
 		if (WaitForAvailable(1))
