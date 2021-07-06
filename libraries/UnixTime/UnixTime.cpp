@@ -43,8 +43,10 @@ time32_t		UnixTime::sTime;
 bool			UnixTime::sTimeChanged;
 
 // SLEEP_DELAY : If no activity after SLEEP_DELAY seconds, go to sleep
-#define SLEEP_DELAY	30
+// This can also be set via UnixTime::SetSleepDelay()
+#define SLEEP_DELAY	90
 time32_t			UnixTime::sSleepTime;
+uint32_t			UnixTime::sSleepDelay = SLEEP_DELAY;
 // date +%s		<< Unix command to get the local time
 
 // https://www.epochconverter.com
@@ -427,9 +429,16 @@ void UnixTime::SetUnixTimeFromSerial(void)
 }
 #endif
 
+/******************************* SetSleepDelay ********************************/
+void UnixTime::SetSleepDelay(
+	uint32_t	inDelaySeconds)
+{
+	sSleepDelay = inDelaySeconds;
+}
+
 /******************************* ResetSleepTime *******************************/
 void UnixTime::ResetSleepTime(void)
 {
-	sSleepTime = sTime + SLEEP_DELAY;
+	sSleepTime = sTime + sSleepDelay;
 }
 

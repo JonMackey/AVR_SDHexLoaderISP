@@ -122,6 +122,8 @@ public:
 	static void				ResetSleepTime(void);
 	static inline bool		TimeToSleep(void)
 								{return(sSleepTime < Time());}
+	static void				SetSleepDelay(
+								uint32_t				inDelaySeconds);
 	static void				SDFatDateTimeCB(
 								uint16_t*				outDate,
 								uint16_t*				outTime);
@@ -134,6 +136,7 @@ protected:
 #endif
 	static time32_t			sSleepTime;
 	static time32_t			sTime;
+	static uint32_t			sSleepDelay;
 	static bool				sTimeChanged;
 
 	static bool				sFormat24Hour;	// false = 12, true = 24
